@@ -6,6 +6,26 @@ The project uses [Semantic Versioning](https://semver.org/). The first two
 versions below are reconstructed from the repository history; version 0.3.0 is
 the first release to carry an explicit `VERSION` file.
 
+## [0.5.1] - 2026-11-07
+
+### Fixed
+
+- **Multi-profile countdown leak** (reported 2026-11-07: two profiles showed the
+  same `4t` chip and reset together). The nudge countdown was one module-global
+  `turnsSince` incremented by every profile's `message.start` and reset by any
+  profile's `review.summary`. Now each profile keeps its own counter:
+  - `message.start` counts against the event's OWN profile (the desktop gateway
+    registry stamps every `GatewayEvent` with its source profile; primary socket
+    in `use-gateway-boot`, secondaries via `stampSecondaryProfileOwner`);
+  - `review.summary` restarts only the completing profile's countdown;
+  - the chip renders the ACTIVE profile's counter via `host.state.profile`
+    (the atom mirroring the gateway route) and re-renders when the active
+    profile switches;
+  - `reconcile()` attributes its log-derived turn count to the active profile
+    (`host.logs` is already profile-scoped).
+  Hosts without `host.state.profile` (older builds) fall back to the previous
+  single-profile behavior.
+
 ## [0.5.0] - 2026-10-19
 
 ### Fixed

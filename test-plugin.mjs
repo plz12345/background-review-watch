@@ -31,8 +31,21 @@ const storage = {
   set: (k, v) => { store[k] = v; return Promise.resolve() },
 }
 
+// v0.5.1: fake of the desktop gateway's profile atom (host.state.profile). The
+// registry stamps every GatewayEvent with its source profile and mirrors the
+// active route in this atom; the plugin must keep one countdown per profile.
+let activeProfile = 'default'
+const profileListeners = new Set()
+const setProfile = (p) => { activeProfile = p; for (const cb of profileListeners) cb() }
+
 const eventHandlers = new Map()
 const host = {
+  state: {
+    profile: {
+      get: () => activeProfile,
+      listen: (cb) => { profileListeners.add(cb); return () => profileListeners.delete(cb) },
+    },
+  },
   logs: async ({ search }) => ({
     lines:
       search === 'bg-review' ? reviewLines
@@ -223,6 +236,31 @@ text = renderedText(chip)
 assert.ok(text.includes('review idle'), `expected plain idle after clean poll, got: ${text}`)
 assert.ok(text.includes('Last background review finished'), `idle tooltip carries the persisted last review: ${text}`)
 
+// 11. v0.5.1 multi-profile regression (the "4t on two profiles" leak): the nudge
+//     countdown must be kept PER PROFILE. Events carry their source profile
+//     (GatewayEvent.profile); the chip renders the ACTIVE profile's counter via
+//     host.state.profile, and a review.summary restarts only its own profile.
+eventHandlers.get('message.start')({ profile: 'default' }) // default: 1 turn
+eventHandlers.get('message.start')({ profile: 'alt' })     // alt: 3 turns
+eventHandlers.get('message.start')({ profile: 'alt' })
+eventHandlers.get('message.start')({ profile: 'alt' })
+text = renderedText(chip) // active = default → 9 left, memory 1/10
+assert.ok(text.includes('9t'), `default profile should show 9 turns left, got: ${text}`)
+assert.ok(text.includes('memory 1/10'), `default profile should show memory 1/10, got: ${text}`)
+setProfile('alt') // switch the active profile → atom listener re-renders
+text = renderedText(chip)
+assert.ok(text.includes('7t'), `alt profile should show 7 turns left, got: ${text}`)
+assert.ok(text.includes('memory 3/10'), `alt profile should show memory 3/10, got: ${text}`)
+eventHandlers.get('review.summary')({ profile: 'alt', text: 'Background review complete result=improved' })
+await new Promise(resolve => setTimeout(resolve, 20))
+text = renderedText(chip) // alt restarts from zero
+assert.ok(text.includes('10t'), `alt profile should reset to 10 turns, got: ${text}`)
+setProfile('default')
+text = renderedText(chip) // default keeps its own count
+assert.ok(text.includes('9t'), `default profile must keep 9 turns, got: ${text}`)
+assert.ok(text.includes('memory 1/10'), `default profile must keep memory 1/10, got: ${text}`)
+
 dispose()
 assert.equal(eventHandlers.size, 0)
+assert.equal(profileListeners.size, 0, 'profile atom listener unsubscribed on dispose')
 console.log(`background-review-watch v${version} smoke test passed`)
