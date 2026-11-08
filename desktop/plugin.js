@@ -266,9 +266,19 @@ async function hydrateSettings() {
   } catch { /* storage blip — defaults stand */ }
 }
 
-function persistSettings(rec) {
+// The storage bridge's set() is sync (returns void) in some app builds and a Promise in
+// others — never call .catch on it unconditionally (sync builds throw "Cannot read properties
+// of undefined (reading 'catch')", which used to kill the whole reconcile cycle after the
+// value was already written).
+function safeStorageSet(key, value) {
   if (!engineCtx || !engineCtx.storage) return
-  engineCtx.storage.set(SETTINGS_KEY, rec).catch(() => {})
+  let p
+  try { p = engineCtx.storage.set(key, value) } catch { return }
+  if (p && typeof p.catch === 'function') p.catch(() => {})
+}
+
+function persistSettings(rec) {
+  safeStorageSet(SETTINGS_KEY, rec)
 }
 
 // Sanitize + persist + apply. Called from the Settings page (user value) and hydrate (stored value).
@@ -287,8 +297,7 @@ async function hydrateLastCompact() {
 }
 
 function persistLastCompact(rec) {
-  if (!engineCtx || !engineCtx.storage) return
-  engineCtx.storage.set(COMPACT_LAST_KEY, rec).catch(() => {})
+  safeStorageSet(COMPACT_LAST_KEY, rec)
 }
 
 async function hydrateReviewLast() {
@@ -300,8 +309,7 @@ async function hydrateReviewLast() {
 }
 
 function persistReviewLast(rec) {
-  if (!engineCtx || !engineCtx.storage) return
-  engineCtx.storage.set(REVIEW_LAST_KEY, rec).catch(() => {})
+  safeStorageSet(REVIEW_LAST_KEY, rec)
 }
 
 function collectReviewMarkers(lines) {

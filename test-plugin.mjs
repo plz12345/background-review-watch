@@ -260,6 +260,28 @@ text = renderedText(chip) // default keeps its own count
 assert.ok(text.includes('9t'), `default profile must keep 9 turns, got: ${text}`)
 assert.ok(text.includes('memory 1/10'), `default profile must keep memory 1/10, got: ${text}`)
 
+// 12. v0.5.2 sync storage bridge regression: the desktop app's createPluginStorage.set is
+//     SYNC (returns void) — v0.5.0/v0.5.1 called .catch on its return value, so every
+//     persist threw a TypeError AFTER the value was written. In reconcile that killed the
+//     cycle before set() — after a result=none review (no review.summary event) the chip
+//     froze on the stale record forever (the 2026-11-08 "memory 14/10, last 13h" incident).
+//     Discriminator: a fresh completion marker must refresh doneAt → the done-flash label
+//     reads ~1s; with the crash, set() never runs and the flash stays ≥10s old.
+const asyncSet = storage.set
+storage.set = (k, v) => { store[k] = v } // sync bridge: returns undefined, like the app
+await new Promise(resolve => setTimeout(resolve, 5100)) // clear the reconcile debounce
+// Fresh completion marker, newer than the persisted record from step 2. logTs is
+// evaluated here (after the sleep) so the marker's own timestamp is ~1s old at render.
+reviewLines = [`${logTs(1000)} INFO agent.background_review: Background review complete: thread=bg-review calls=6 in=209650 out=2255 cache_read=0 result=none`]
+await texp.__reconcileForTests()
+text = renderedText(chip)
+const flash = text.match(/review done (\d+)s ago/)
+assert.ok(flash, `expected a done-flash label after the fresh completion marker, got: ${text}`)
+assert.ok(Number(flash[1]) <= 2, `sync persist must not kill the cycle before set() — doneAt should be fresh, got: ${text}`)
+const synced = store['background-review-watch.review-last.v1']
+assert.ok(synced && synced.result === 'none', `record actually written through the sync bridge, got: ${JSON.stringify(synced)}`)
+storage.set = asyncSet
+
 dispose()
 assert.equal(eventHandlers.size, 0)
 assert.equal(profileListeners.size, 0, 'profile atom listener unsubscribed on dispose')
